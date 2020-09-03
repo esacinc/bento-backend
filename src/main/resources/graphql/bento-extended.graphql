@@ -692,6 +692,11 @@ type GroupCount {
     subjects: Int
 }
 
+type GroupList {
+    group: String
+    subjects: [String]
+}
+
 type SubjectOverview {
     subject_id: String
     program: String
@@ -868,6 +873,19 @@ type QueryType {
     subjectCountByChemotherapyRegimen: [GroupCount] @cypher(statement: "MATCH (g:therapeutic_procedure) OPTIONAL MATCH (g)-->()-->(ss:study_subject) RETURN g.chemotherapy_regimen AS group, count(DISTINCT ss) as subjects")
     subjectCountByEndocrineTherapy: [GroupCount] @cypher(statement: "MATCH (g:therapeutic_procedure) OPTIONAL MATCH (g)-->()-->(ss:study_subject) RETURN g.endocrine_therapy_type AS group, count(DISTINCT ss) as subjects")
     subjectCountByMenopauseStatus: [GroupCount] @cypher(statement: "MATCH (g:demographic_data) OPTIONAL MATCH (g)-->(ss:study_subject) RETURN g.menopause_status AS group, count(DISTINCT ss) as subjects")
+
+    "Group subjects"
+    subjectListByProgram: [GroupList] @cypher(statement: "MATCH (g:program) OPTIONAL MATCH (g)<--(:study)<--(ss:study_subject) RETURN g.program_acronym AS group, collect(DISTINCT ss.study_subject_id) as subjects")
+    subjectListByStudy: [GroupList] @cypher(statement: "MATCH (g:study) OPTIONAL MATCH (g)<--(ss:study_subject) RETURN g.study_acronym + ': ' + g.study_short_description AS group, collect(DISTINCT ss.study_subject_id) as subjects")
+    subjectListByDiagnoses: [GroupList] @cypher(statement: "MATCH (ss:study_subject) RETURN ss.disease_subtype AS group, collect(DISTINCT ss.study_subject_id) as subjects")
+    subjectListByRecurrenceScore: [GroupList] @cypher(statement: "MATCH (g:stratification_factor) OPTIONAL MATCH (g)-->(ss:study_subject) RETURN g.grouped_recurrence_score AS group, collect(DISTINCT ss.study_subject_id) as subjects")
+    subjectListByTumorSize: [GroupList] @cypher(statement: "MATCH (g:diagnosis) OPTIONAL MATCH (g)-->(ss:study_subject) RETURN g.tumor_size_group AS group, collect(DISTINCT ss.study_subject_id) as subjects")
+    subjectListByTumorGrade: [GroupList] @cypher(statement: "MATCH (g:diagnosis) OPTIONAL MATCH (g)-->(ss:study_subject) RETURN g.tumor_grade AS group, collect(DISTINCT ss.study_subject_id) as subjects")
+    subjectListByErStatus: [GroupList] @cypher(statement: "MATCH (g:diagnosis) OPTIONAL MATCH (g)-->(ss:study_subject) RETURN g.er_status AS group, collect(DISTINCT ss.study_subject_id) as subjects")
+    subjectListByPrStatus: [GroupList] @cypher(statement: "MATCH (g:diagnosis) OPTIONAL MATCH (g)-->(ss:study_subject) RETURN g.pr_status AS group, collect(DISTINCT ss.study_subject_id) as subjects")
+    subjectListByChemotherapyRegimen: [GroupList] @cypher(statement: "MATCH (g:therapeutic_procedure) OPTIONAL MATCH (g)-->()-->(ss:study_subject) RETURN g.chemotherapy_regimen AS group, collect(DISTINCT ss.study_subject_id) as subjects")
+    subjectListByEndocrineTherapy: [GroupList] @cypher(statement: "MATCH (g:therapeutic_procedure) OPTIONAL MATCH (g)-->()-->(ss:study_subject) RETURN g.endocrine_therapy_type AS group, collect(DISTINCT ss.study_subject_id) as subjects")
+    subjectListByMenopauseStatus: [GroupList] @cypher(statement: "MATCH (g:demographic_data) OPTIONAL MATCH (g)-->(ss:study_subject) RETURN g.menopause_status AS group, collect(DISTINCT ss.study_subject_id) as subjects")
 
     armsByPrograms: [ProgramArms] @cypher(statement: """
         MATCH (p:program)
