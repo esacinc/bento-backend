@@ -19,9 +19,9 @@ type adverse_event {
   dose_limiting_toxicity: String
   unexpected_adverse_event: String
   crf_id: String
+  case: case @relation(name:"of_case", direction:OUT)
   agent: agent @relation(name:"of_agent", direction:OUT)
   cases: [case] @relation(name:"had_adverse_event", direction:IN)
-  visit: visit @relation(name:"on_visit", direction:OUT)
   next_adverse_event: adverse_event @relation(name:"next", direction:OUT)
   prior_adverse_event: adverse_event @relation(name:"next", direction:IN)
 }
@@ -92,6 +92,8 @@ type case {
   follow_ups: [follow_up] @relation(name:"of_case", direction:IN)
   samples: [sample] @relation(name:"of_case", direction:IN)
   visits: [visit] @relation(name:"of_case", direction:IN)
+  adverse_events: [adverse_event] @relation(name:"of_case", direction:IN)
+  NONE: [registration] @relation(name:"of_case", direction:IN)
   adverse_event: adverse_event @relation(name:"had_adverse_event", direction:OUT)
   off_study: off_study @relation(name:"went_off_study", direction:OUT)
   off_treatment: off_treatment @relation(name:"went_off_treatment", direction:OUT)
@@ -121,7 +123,10 @@ type demographic {
   patient_age_at_enrollment_original_unit: String
   date_of_birth: String
   sex: String
-  weight: String
+  weight: Float
+  weight_unit: String
+  weight_original: Float
+  weight_original_unit: String
   neutered_indicator: String
   crf_id: String
   case: case @relation(name:"of_case", direction:OUT)
@@ -135,10 +140,11 @@ type diagnosis {
   histology_cytopathology: String
   date_of_histology_confirmation: String
   histological_grade: String
-  pathology_report: Boolean
-  treatment_data: Boolean
-  follow_up_data: Boolean
-  concurrent_disease: Boolean
+  best_response: String
+  pathology_report: String
+  treatment_data: String
+  follow_up_data: String
+  concurrent_disease: String
   concurrent_disease_type: String
   crf_id: String
   case: case @relation(name:"of_case", direction:OUT)
@@ -187,8 +193,8 @@ type file {
   md5sum: String
   file_status: String
   uuid: String
-  file_locations: String
-  studies: [study] @relation(name:"of_study", direction:OUT)
+  file_location: String
+  study: study @relation(name:"of_study", direction:OUT)
   sample: sample @relation(name:"of_sample", direction:OUT)
   assay: assay @relation(name:"of_assay", direction:OUT)
   diagnosis: diagnosis @relation(name:"from_diagnosis", direction:OUT)
@@ -318,12 +324,26 @@ type program {
   studies: [study] @relation(name:"member_of", direction:IN)
 }
 
+type registration {
+  registration_origin: String
+  registration_id: String
+  is_primary_id: String
+  case: case @relation(name:"of_case", direction:OUT)
+}
+
 type sample {
   sample_id: String
-  sample_type: String
+  sample_site: String
+  physical_sample_type: String
   general_sample_pathology: String
+  tumor_sample_origin: String
+  summarized_sample_type: String
+  molecular_subtype: String
+  specific_sample_pathology: String
   date_of_sample_collection: String
-  necropsy_sample: Boolean
+  sample_chronology: String
+  necropsy_sample: String
+  tumor_grade: String
   length_of_tumor: Float
   length_of_tumor_unit: String
   length_of_tumor_original: Float
@@ -332,6 +352,10 @@ type sample {
   width_of_tumor_unit: String
   width_of_tumor_original: Float
   width_of_tumor_original_unit: String
+  volume_of_tumor: Float
+  volume_of_tumor_unit: String
+  volume_of_tumor_original: Float
+  volume_of_tumor_original_unit: String
   analysis_area: Float
   analysis_area_unit: String
   analysis_area_original: Float
@@ -352,8 +376,9 @@ type sample {
   non_tumor_tissue_area_unit: String
   non_tumor_tissue_area_original: Float
   non_tumor_tissue_area_original_unit: String
-  percentage_tumor: Float
+  percentage_tumor: String
   percentage_stroma: Float
+  sample_preservation: String
   comment: String
   case: case @relation(name:"of_case", direction:OUT)
   visit: visit @relation(name:"on_visit", direction:OUT)
@@ -383,6 +408,7 @@ type study {
 type study_arm {
   arm: String
   ctep_treatment_assignment_code: String
+  arm_description: String
   cohorts: [cohort] @relation(name:"member_of", direction:IN)
   study: study @relation(name:"member_of", direction:OUT)
   agents: [agent] @relation(name:"of_study_arm", direction:IN)
@@ -404,7 +430,6 @@ type visit {
   samples: [sample] @relation(name:"on_visit", direction:IN)
   physical_exams: [physical_exam] @relation(name:"on_visit", direction:IN)
   lab_exams: [lab_exam] @relation(name:"on_visit", direction:IN)
-  adverse_events: [adverse_event] @relation(name:"on_visit", direction:IN)
   disease_extents: [disease_extent] @relation(name:"on_visit", direction:IN)
   vital_signs: [vital_signs] @relation(name:"on_visit", direction:IN)
   next_visit: visit @relation(name:"next", direction:OUT)
@@ -604,18 +629,119 @@ type QueryType {
   sampleCountOfCase(case_id: String!): Int @cypher(statement: "MATCH (c:case {case_id: $case_id})<-[*]-(s:sample) RETURN count(distinct(s))")
 
   "Count by group"
-  caseCountByStudyCode: [StudyCodeCaseCount] @cypher(statement: "MATCH (s:study) OPTIONAL MATCH (s)<-[*]-(c:case) RETURN s.clinical_study_designation AS study_code, count(DISTINCT(c)) AS cases ORDER BY s.clinical_study_designation")
-  caseCountByDiagnosis: [DiagnosisCaseCount] @cypher(statement: "MATCH (d:diagnosis)-[:of_case]->(c:case) RETURN d.disease_term AS diagnosis, count(c) AS cases ORDER BY d.disease_term")
-  caseCountByGender: [GenderCaseCount] @cypher(statement: "MATCH (d:demographic)-[:of_case]->(c:case) RETURN d.sex AS gender, count(c) AS cases ORDER BY d.sex")
-  caseCountByBreed: [BreedCaseCount] @cypher(statement: "MATCH (c:case)<-[:of_case]-(d:demographic) RETURN d.breed AS breed, count(c) AS cases")
-  caseCountByNeuteredStatus :[NeuteredStatusCaseCount] @cypher(statement: " MATCH (c:case)<--(d:demographic) return d.neutered_indicator AS neutered_status, count(c) AS cases ")
-  caseCountByStageOfDisease: [StageOfDiseaseCaseCount] @cypher(statement: "MATCH (d:diagnosis)-[:of_case]->(c:case) RETURN d.stage_of_disease AS stage_of_disease, count(c) AS cases ORDER BY d.stage_of_disease")
-  caseCountByDiseaseSite: [DiseaseSiteCaseCount] @cypher(statement: "MATCH (d:diagnosis)-[:of_case]->(c:case) RETURN d.primary_disease_site AS disease_site, count(c) AS cases ORDER BY d.primary_disease_site")
-  caseCountByStudyType: [StudyTypeCaseCount] @cypher(statement: "MATCH (s:study)<-[*]-(c:case) RETURN s.clinical_study_type AS study_type, COUNT(DISTINCT(c)) AS cases")
-  caseCountByAge: [AgeCaseCount] @cypher(statement: "MATCH (d:demographic)-->(c:case) RETURN d.patient_age_at_enrollment AS age, COUNT(DISTINCT(c)) AS cases ORDER BY age")
-  caseCountByDataType: [FileTypeCaseCount] @cypher(statement: "MATCH (f:file)-[*]->(c:case) RETURN f.file_type AS data_type, COUNT(DISTINCT(c)) AS cases ORDER BY data_type")
-  caseCountByFileFormat: [FileFormatCaseCount] @cypher(statement: "MATCH (f:file)-[*]->(c:case) RETURN f.file_format AS file_format, COUNT(DISTINCT(c)) AS cases ORDER BY file_format")
-  caseCountByProgram: [ProgramCaseCount] @cypher(statement: "MATCH (p:program) OPTIONAL Match (p)<-[*]-(c:case) RETURN  p.program_acronym AS program, COUNT(DISTINCT(c)) AS cases ORDER BY program")
+  caseCountByStudyCode(case_ids: [String] = []): [StudyCodeCaseCount] @cypher(statement: """
+    MATCH (s:study)
+    OPTIONAL MATCH (s)<-[:member_of]-(c:case)
+    WHERE size($case_ids) = 0 OR c.case_id IN $case_ids
+    RETURN
+      s.clinical_study_designation AS study_code,
+      count(DISTINCT(c)) AS cases
+    ORDER BY
+      s.clinical_study_designation
+  """)
+
+  caseCountByDiagnosis(case_ids: [String] = []): [DiagnosisCaseCount] @cypher(statement: """
+  MATCH (d:diagnosis)-[:of_case]->(c:case)
+    WHERE (size($case_ids) = 0 OR c.case_id IN $case_ids)
+  RETURN
+    d.disease_term AS diagnosis,
+    count(c) AS cases
+  ORDER BY
+    d.disease_term
+  """)
+
+  caseCountByGender(case_ids: [String] = []): [GenderCaseCount] @cypher(statement: """
+    MATCH (d:demographic)-[:of_case]->(c:case)
+    WHERE (size($case_ids) = 0 OR c.case_id IN $case_ids)
+    RETURN
+      d.sex AS gender,
+      count(c) AS cases
+    ORDER BY
+      d.sex
+  """)
+
+  caseCountByBreed(case_ids: [String] = []): [BreedCaseCount] @cypher(statement: """
+    MATCH (c:case)<-[:of_case]-(d:demographic)
+    WHERE (size($case_ids) = 0 OR c.case_id IN $case_ids)
+    RETURN
+      d.breed AS breed,
+      count(c) AS cases
+  """)
+
+  caseCountByNeuteredStatus(case_ids: [String] = []): [NeuteredStatusCaseCount] @cypher(statement: """
+    MATCH (c:case)<--(d:demographic)
+    WHERE (size($case_ids) = 0 OR c.case_id IN $case_ids)
+    RETURN
+      d.neutered_indicator AS neutered_status,
+      count(c) AS cases
+  """)
+
+  caseCountByStageOfDisease(case_ids: [String] = []): [StageOfDiseaseCaseCount] @cypher(statement: """
+    MATCH (d:diagnosis)-[:of_case]->(c:case)
+    WHERE (size($case_ids) = 0 OR c.case_id IN $case_ids)
+    RETURN
+      d.stage_of_disease AS stage_of_disease,
+      count(c) AS cases
+    ORDER BY
+      d.stage_of_disease
+  """)
+
+  caseCountByDiseaseSite(case_ids: [String] = []): [DiseaseSiteCaseCount] @cypher(statement: """
+    MATCH (d:diagnosis)-[:of_case]->(c:case)
+    WHERE (size($case_ids) = 0 OR c.case_id IN $case_ids)
+    RETURN
+      d.primary_disease_site AS disease_site,
+      count(c) AS cases
+    ORDER BY
+      d.primary_disease_site
+  """)
+
+  caseCountByStudyType(case_ids: [String] = []): [StudyTypeCaseCount] @cypher(statement: """
+    MATCH (s:study)<-[*]-(c:case)
+    WHERE (size($case_ids) = 0 OR c.case_id IN $case_ids)
+    RETURN
+      s.clinical_study_type AS study_type,
+      COUNT(DISTINCT(c)) AS cases
+  """)
+
+  caseCountByAge(case_ids: [String] = []): [AgeCaseCount] @cypher(statement: """
+    MATCH (d:demographic)-->(c:case)
+    WHERE (size($case_ids) = 0 OR c.case_id IN $case_ids)
+    RETURN
+      d.patient_age_at_enrollment AS age,
+      COUNT(DISTINCT(c)) AS cases ORDER BY age
+  """)
+
+  caseCountByDataType(case_ids: [String] = []): [FileTypeCaseCount] @cypher(statement: """
+    MATCH (f:file)-[*]->(c:case)
+    WHERE (size($case_ids) = 0 OR c.case_id IN $case_ids)
+    RETURN
+      f.file_type AS data_type,
+      COUNT(DISTINCT(c)) AS cases
+    ORDER BY
+      data_type
+  """)
+
+  caseCountByFileFormat(case_ids: [String] = []): [FileFormatCaseCount] @cypher(statement: """
+    MATCH (f:file)-[*]->(c:case)
+    WHERE (size($case_ids) = 0 OR c.case_id IN $case_ids)
+    RETURN
+      f.file_format AS file_format,
+      COUNT(DISTINCT(c)) AS cases
+    ORDER BY
+      file_format
+  """)
+
+  caseCountByProgram(case_ids: [String] = []): [ProgramCaseCount] @cypher(statement: """
+    MATCH (p:program)
+    OPTIONAL Match (p)<-[*]-(c:case)
+    WHERE (size($case_ids) = 0 OR c.case_id IN $case_ids)
+    RETURN
+      p.program_acronym AS program,
+      COUNT(DISTINCT(c)) AS cases
+    ORDER BY
+      program
+  """)
 
   "Combined info"
   studiesByProgramId(program_id: String!): [StudyOfProgram] @cypher(statement: "MATCH (p:program {program_acronym: $program_id})<-[*]-(s:study) OPTIONAL MATCH (s)<-[*]-(c:case) RETURN p.program_acronym AS program_id, s.clinical_study_id AS clinical_study_id, s.clinical_study_designation AS clinical_study_designation, s.clinical_study_name AS clinical_study_name, s.clinical_study_description AS clinical_study_description, s.clinical_study_type AS clinical_study_type, s.date_of_iacuc_approval AS date_of_iacuc_approval, s.dates_of_conduct AS dates_of_conduct, COUNT(DISTINCT(c)) as numberOfCases ORDER BY clinical_study_designation")
