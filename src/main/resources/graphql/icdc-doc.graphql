@@ -601,6 +601,20 @@ type FileFormatCaseCount {
   cases: Int
 }
 
+type FileDetail {
+  file_type: String
+  association: String
+  file_description: String
+  file_format: String
+  file_size: Float
+  case_id: String
+  breed: String
+  diagnosis: String
+  study_code: String
+  file_uuid: String
+  md5sum: String
+}
+
 
 
 type QueryType {
@@ -652,6 +666,10 @@ type QueryType {
   caseCountByFileFormat(case_ids: [String] = []): [FileFormatCaseCount] 
 
   caseCountByProgram(case_ids: [String] = []): [ProgramCaseCount] 
+
+  filesInList(uuids: [String], order_by: String = "", first: Int = 100, offset: Int = 0): [FileDetail] 
+
+  filesInListDesc(uuids: [String], order_by: String = "", first: Int = 100, offset: Int = 0): [FileDetail] 
 
   "Combined info"
   studiesByProgramId(program_id: String!): [StudyOfProgram] 
