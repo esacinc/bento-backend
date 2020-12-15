@@ -615,6 +615,34 @@ type FileDetail {
   md5sum: String
 }
 
+type FileOverview {
+  file_name: String
+  file_type: String
+  association: String
+  file_description: String
+  file_format: String
+  file_size: Float
+  case_id: String
+  breed: String
+  diagnosis: String
+  study_code: String
+  file_uuid: String
+}
+
+type SampleOverview {
+  sample_id: String
+  case_id: String
+  breed: String
+  diagnosis: String
+  sample_site: String
+  sample_type: String
+  sample_pathology: String
+  tumor_grade: String
+  sample_chronology: String
+  percentage_tumor: String
+  necropsy_sample: String
+  sample_preservation: String
+}
 
 
 type QueryType {
@@ -684,4 +712,12 @@ type QueryType {
   samplesByCaseId(case_id: String!): [sample] 
   filesBySampleId(sample_id: String!): [file] 
   filesOfStudy(study_code: String!): [file] 
+
+  fileOverview(case_ids: [String] = [], file_uuids: [String]=[], order_by: String = "", first: Int = 100, offset: Int = 0): [FileOverview] 
+
+  fileOverviewDesc(case_ids: [String] = [], file_uuids: [String]=[], order_by: String = "", first: Int = 100, offset: Int = 0): [FileOverview] 
+
+  sampleOverview(case_ids: [String] = [], sample_ids: [String] = [], order_by: String = "", first: Int = 100, offset: Int = 0): [SampleOverview] 
+
+  sampleOverviewDesc(case_ids: [String] = [], sample_ids: [String] = [], order_by: String = "", first: Int = 100, offset: Int = 0): [SampleOverview] 
 }
