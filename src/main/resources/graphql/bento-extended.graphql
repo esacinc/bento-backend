@@ -913,6 +913,11 @@ type SearchResult {
     firstPage: [SubjectOverview]
 }
 
+type GroupList {
+    group: String
+    subjects: [String]
+}
+
 schema {
     query: QueryType
 }
@@ -931,6 +936,10 @@ type QueryType {
     "Group counts"
     subjectCountByProgram(subject_ids: [String] = []): [GroupCount] @cypher(statement: """
         MATCH (g:program)
+<<<<<<< HEAD
+        OPTIONAL MATCH (g)<--(s:study)<--(ss:study_subject)
+        WITH DISTINCT ss, g
+=======
         OPTIONAL MATCH (g)<--(:study)<--(ss:study_subject)
         WITH DISTINCT ss, g
             WHERE (size($subject_ids) = 0 OR ss.study_subject_id IN $subject_ids)
@@ -2006,6 +2015,67 @@ type QueryType {
                           files: files, samples: samples, lab_procedures: lab_procedures}))[0..$first] AS firstPage
     """, passThrough:true)
 
+    searchSubjectsWithGroupLists (subject_ids: [String] = [], first: Int = 100): SearchResult @cypher(statement: """
+        // Filtering subjects
+        MATCH (ss:study_subject)
+        WHERE (ss.study_subject_id IN $subject_ids)
+        MATCH (ss)<-[:sf_of_study_subject]-(sf)
+        MATCH (ss)<-[:diagnosis_of_study_subject]-(d)<-[:tp_of_diagnosis]-(tp)
+        MATCH (ss:study_subject)-[:study_subject_of_study]->(s)-[:study_of_program]->(p)
+        MATCH (ss)<-[:demographic_of_study_subject]-(demo)
+        MATCH (ss)<-[:sample_of_study_subject]-(samp)
+        MATCH (ss)<-[*..2]-(parent)<--(f:file)
+
+        // Preparing return values
+        OPTIONAL MATCH (f)-[:file_of_laboratory_procedure]->(lp)
+        WITH ss, collect(DISTINCT samp.sample_id) AS samples, collect(DISTINCT lp.laboratory_procedure_id) AS lab_procedures, collect(DISTINCT f) AS files
+        OPTIONAL MATCH (ss)-[:study_subject_of_study]->(s)-[:study_of_program]->(p)
+        OPTIONAL MATCH (ss)<-[:sf_of_study_subject]-(sf)
+        OPTIONAL MATCH (ss)<-[:diagnosis_of_study_subject]-(d)
+        OPTIONAL MATCH (d)<-[:tp_of_diagnosis]-(tp)
+        OPTIONAL MATCH (ss)<-[:demographic_of_study_subject]-(demo)
+        WITH
+            p.program_acronym AS program,
+            p.program_id AS program_id,
+            s.study_acronym AS study_acronym,
+            s.study_short_description AS study_short_description,
+            s.study_acronym + ': ' + s.study_short_description AS study_info,
+            ss.study_subject_id AS subject_id,
+            ss.disease_subtype AS diagnosis,
+            sf.grouped_recurrence_score AS recurrence_score,
+            d.tumor_size_group AS tumor_size,
+            d.tumor_grade AS tumor_grade,
+            d.er_status AS er_status,
+            d.pr_status AS pr_status,
+            tp.chemotherapy_regimen AS chemotherapy,
+            tp.endocrine_therapy_type AS endocrine_therapy,
+            demo.menopause_status AS menopause_status,
+            demo.age_at_index AS age_at_index,
+            demo.survival_time AS survival_time,
+            demo.survival_time_unit AS survival_time_unit,
+            samples,
+            files,
+            lab_procedures
+        UNWIND samples AS sample_id
+        UNWIND lab_procedures AS lab_procedure_id
+        UNWIND files AS file
+        RETURN
+            COLLECT(DISTINCT subject_id) AS subjectIds,
+            COUNT(DISTINCT program) AS numberOfPrograms,
+            COUNT(DISTINCT study_acronym) AS numberOfStudies,
+            COUNT(DISTINCT subject_id) AS numberOfSubjects,
+            COUNT(DISTINCT lab_procedure_id) AS numberOfLabProcedures,
+            COUNT(DISTINCT sample_id) AS numberOfSamples,
+            COUNT(DISTINCT file) AS numberOfFiles,
+            COLLECT( DISTINCT({ subject_id: subject_id, program: program, program_id: program_id, study_acronym: study_acronym,
+        study_short_description: study_short_description, study_info: study_info, diagnosis: diagnosis,
+        recurrence_score: recurrence_score, tumor_size: tumor_size, tumor_grade: tumor_grade,
+        er_status: er_status, pr_status: pr_status, chemotherapy: chemotherapy,
+        endocrine_therapy: endocrine_therapy, menopause_status: menopause_status,
+        age_at_index: age_at_index, survival_time: survival_time, survival_time_unit: survival_time_unit,
+        files: files, samples: samples, lab_procedures: lab_procedures}))[0..$first] AS firstPage
+    """, passThrough:true)
+
 
     subjectsInList(subject_ids: [String]=[]): [SubjectInfo] @cypher(statement: """
         MATCH (ss:study_subject)
@@ -2410,4 +2480,122 @@ type QueryType {
         LIMIT $first
     """)
 
+    subjectListByProgram: [GroupList] @cypher(statement: """
+    MATCH (p:program)
+    OPTIONAL MATCH (p)<--(s:study)<--(ss:study_subject)
+    RETURN
+        "program:"+p.program_acronym AS group,
+        collect(DISTINCT ss.study_subject_id) as subjects
+    """)
+
+    subjectListByStudy: [GroupList] @cypher(statement: """
+        MATCH (s:study)
+        OPTIONAL MATCH (s)<-[:study_subject_of_study]-(ss:study_subject)
+        RETURN
+            "study:"+s.study_acronym + ': ' + s.study_short_description AS group,
+            collect(DISTINCT ss.study_subject_id) as subjects
+    """)
+
+    subjectListByDiagnoses: [GroupList] @cypher(statement: """
+        MATCH (ss:study_subject)
+        RETURN
+            "diagnosis:"+ss.disease_subtype AS group,
+            collect(DISTINCT ss.study_subject_id) as subjects
+    """)
+
+    subjectListByRecurrenceScore: [GroupList] @cypher(statement: """
+        MATCH (g:stratification_factor)
+        OPTIONAL MATCH (g)-->(ss:study_subject)
+        RETURN
+            "recurrence score:"+g.grouped_recurrence_score AS group,
+            collect(DISTINCT ss.study_subject_id) as subjects
+    """)
+
+    subjectListByTumorSize: [GroupList] @cypher(statement: """
+        MATCH (g:diagnosis)
+        OPTIONAL MATCH (g)-->(ss:study_subject)
+        RETURN
+            "tumor size:"+g.tumor_size_group AS group,
+            collect(DISTINCT ss.study_subject_id) as subjects
+    """)
+
+    subjectListByTumorGrade: [GroupList] @cypher(statement: """
+        MATCH (g:diagnosis)
+        OPTIONAL MATCH (g)-->(ss:study_subject)
+        RETURN
+            "tumor grade:"+g.tumor_grade AS group,
+            collect(DISTINCT ss.study_subject_id) as subjects
+    """)
+
+    subjectListByErStatus: [GroupList] @cypher(statement: """
+        MATCH (g:diagnosis)
+        OPTIONAL MATCH (g)-->(ss:study_subject)
+        RETURN
+            "er status:"+g.er_status AS group,
+            collect(DISTINCT ss.study_subject_id) as subjects
+    """)
+
+    subjectListByPrStatus: [GroupList] @cypher(statement: """
+        MATCH (g:diagnosis)
+        OPTIONAL MATCH (g)-->(ss:study_subject)
+        RETURN
+            "pr status:"+g.pr_status AS group,
+            collect(DISTINCT ss.study_subject_id) as subjects
+    """)
+
+    subjectListByChemotherapyRegimen: [GroupList] @cypher(statement: """
+        MATCH (g:therapeutic_procedure)
+        OPTIONAL MATCH (g)-->()-->(ss:study_subject)
+        RETURN
+            "chemotherapy regimen:"+g.chemotherapy_regimen AS group,
+            collect(DISTINCT ss.study_subject_id) as subjects
+    """)
+
+    subjectListByEndocrineTherapy: [GroupList] @cypher(statement: """
+        MATCH (g:therapeutic_procedure)
+        OPTIONAL MATCH (g)-->()-->(ss:study_subject)
+        RETURN
+            "endocrine therapy:"+g.endocrine_therapy_type AS group,
+            collect(DISTINCT ss.study_subject_id) as subjects
+    """)
+
+    subjectListByMenopauseStatus: [GroupList] @cypher(statement: """
+        MATCH (g:demographic_data)
+        OPTIONAL MATCH (g)-->(ss:study_subject)
+        RETURN
+            "menopause status:"+g.menopause_status AS group,
+            collect(DISTINCT ss.study_subject_id) as subjects
+    """)
+
+    subjectListByTissueType: [GroupList] @cypher(statement: """
+        MATCH (g:sample)
+        OPTIONAL MATCH (g)-->(ss:study_subject)
+        RETURN
+            "tissue type:"+g.tissue_type as group,
+            collect(DISTINCT ss.study_subject_id) as subjects
+    """)
+
+    subjectListByTissueComposition: [GroupList] @cypher(statement: """
+        MATCH (g:sample)
+        OPTIONAL MATCH (g)-->(ss:study_subject)
+        RETURN
+            "sample:"+g.composition as group,
+            collect(DISTINCT ss.study_subject_id) as subjects
+    """)
+
+    subjectListByFileAssociation: [GroupList] @cypher(statement: """
+        MATCH (g:file)
+        OPTIONAL MATCH (g)-->(parent)-->(ss:study_subject)
+        RETURN
+            "file association:"+head(labels(parent)) as group,
+            collect(DISTINCT ss.study_subject_id) as subjects
+    """)
+
+    subjectListByFileType: [GroupList] @cypher(statement: """
+        MATCH (g:file)
+        OPTIONAL MATCH (g)-->(parent)-->(ss:study_subject)
+        RETURN
+            "file type:"+g.file_type as group,
+            collect(DISTINCT ss.study_subject_id) as subjects
+    """)
 }

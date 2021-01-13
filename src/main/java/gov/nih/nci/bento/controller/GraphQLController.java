@@ -1,30 +1,28 @@
 package gov.nih.nci.bento.controller;
 
-import javax.servlet.http.HttpServletResponse;
-
-import com.google.gson.JsonElement;
-import gov.nih.nci.bento.error.ApiError;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.CrossOrigin;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestMethod;
-import org.springframework.web.bind.annotation.ResponseBody;
-import org.springframework.web.bind.annotation.RestController;
-
 import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-
+import com.google.gson.reflect.TypeToken;
+import gov.nih.nci.bento.error.ApiError;
 import gov.nih.nci.bento.model.ConfigurationDAO;
 import gov.nih.nci.bento.service.Neo4JGraphQLService;
 import gov.nih.nci.bento.service.RedisService;
 import graphql.language.Document;
 import graphql.language.OperationDefinition;
 import graphql.parser.Parser;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import javax.servlet.http.HttpServletResponse;
+import javax.validation.constraints.Null;
+import java.util.*;
 
 @RestController
 public class GraphQLController {
@@ -62,6 +60,45 @@ public class GraphQLController {
 	}
 
 	@CrossOrigin
+	@RequestMapping(value = "/set-testing", method = RequestMethod.POST)
+	@ResponseBody
+	public ResponseEntity<String> getGraphQLSetResponse(HttpEntity<String> httpEntity, HttpServletResponse response) {
+		logger.info("hit end point:/set-testing");
+		String reqBody = httpEntity.getBody();
+		ArrayList<String> keys = new ArrayList<>();
+		for(String category: redisService.getGroups()){
+			try{
+				keys.add(storeUnion(category, reqBody));
+			}
+			catch (NullPointerException e){}
+		}
+		String responseText;
+		String subjectIds = String.join("\",\"", redisService.getIntersection(keys.toArray(new String[0])));
+//		subjectIds = "\""+subjectIds+"\"";
+//		try{
+//			String req = String.format("{\"query\":\"query (\\r\\n    $subject_ids: [String],\\r\\n    $first: Int\\r\\n)\\r\\n{\\r\\n    searchSubjectsWithGroupLists(\\r\\n        subject_ids:$subject_ids,\\r\\n        first:$first\\r\\n    )\\r\\n    {\\r\\n        numberOfPrograms\\r\\n        numberOfStudies\\r\\n        numberOfSamples\\r\\n        numberOfLabProcedures\\r\\n        numberOfFiles\\r\\n        subjectIds\\r\\n        firstPage{\\r\\n            subject_id\\r\\n            program\\r\\n            program_id\\r\\n            study_acronym\\r\\n            study_short_description\\r\\n            study_info\\r\\n            diagnosis\\r\\n            recurrence_score\\r\\n            tumor_size\\r\\n            tumor_grade\\r\\n            er_status\\r\\n            pr_status\\r\\n            chemotherapy\\r\\n            endocrine_therapy\\r\\n            menopause_status\\r\\n            age_at_index\\r\\n            survival_time\\r\\n            survival_time_unit\\r\\n            samples\\r\\n            lab_procedures\\r\\n        }\\r\\n    }\\r\\n}\",\"variables\":{\"subject_ids\":[%s],\"first\":10000}}",subjectIds);
+//			responseText = neo4jService.query(req);
+//		}
+//		catch(ApiError e){
+//			String error = ApiError.jsonApiError(e);
+//			return logAndReturnError(e.getStatus(), error);
+//		}
+		return ResponseEntity.ok(subjectIds);
+	}
+
+	private String storeUnion(String category, String reqBody) throws NullPointerException{
+		JsonObject jsonObject = GSON.fromJson(reqBody, JsonObject.class);
+		List<String> list = GSON.fromJson(jsonObject.get(category), List.class);
+		String[] values = list.toArray(new String[0]);
+		for(int i = 0; i < values.length; i++){
+			values[i] = category+":"+values[i];
+		}
+		String key = category+"Union";
+		redisService.unionStore(key, values);
+		return key;
+	}
+
+	@CrossOrigin
 	@RequestMapping(value = "/v1/graphql/", method = RequestMethod.POST)
 	@ResponseBody
 	public ResponseEntity<String> getGraphQLResponse(HttpEntity<String> httpEntity, HttpServletResponse response){
@@ -73,15 +110,15 @@ public class GraphQLController {
 		Gson gson = new Gson();
 		JsonObject jsonObject = gson.fromJson(reqBody, JsonObject.class);
 		String operation;
-		String query_key;
+		String queryKey;
 		try{
 			String sdl = new String(jsonObject.get("query").getAsString().getBytes(), "UTF-8");
 			Parser parser = new Parser();
 			Document document = parser.parseDocument(sdl);
-			query_key = document.toString();
+			queryKey = document.toString();
 			JsonElement rawVar = jsonObject.get("variables");
 			if (null != rawVar) {
-				query_key +=  "::" + rawVar.toString();
+				queryKey +=  "::" + rawVar.toString();
 			}
 			OperationDefinition def = (OperationDefinition) document.getDefinitions().get(0);
 			operation = def.getOperation().toString().toLowerCase();
@@ -97,10 +134,28 @@ public class GraphQLController {
 			try{
 				String responseText;
 				if (config.getRedisEnabled()) {
-					responseText = redisService.getQueryResult(query_key);
+					responseText = redisService.getCachedValue(queryKey);
 					if ( null == responseText) {
 						responseText = neo4jService.query(reqBody);
-						redisService.setQueryResult(query_key, responseText);
+						redisService.cacheValue(queryKey, responseText);
+
+						/*
+						String searchQueryName = "searchSubjects(";
+						String newReqBody;
+						while(reqBody.contains(" (")){
+							reqBody = reqBody.replace(" (", "(");
+						}
+						if(config.getRedisSetsEnabled() && reqBody.contains(searchQueryName)){
+							newReqBody = convertToGroupListQuery(reqBody, searchQueryName);
+							responseText = neo4jService.query(reqBody);
+							if (null == responseText){
+								responseText = neo4jService.query(reqBody);
+								redisService.cacheValue(queryKey, responseText);
+							}
+							else{
+								redisService.cacheValue(newReqBody, responseText);
+							}
+						}*/
 					}
 				} else {
 					responseText = neo4jService.query(reqBody);
@@ -123,6 +178,24 @@ public class GraphQLController {
 			return logAndReturnError(status, error);
 		}
 
+	}
+
+	private String convertToGroupListQuery(String original, String queryName){
+		String[] splitOnQueryName = original.split(queryName);
+		String before = splitOnQueryName[0];
+		int braceIndex = splitOnQueryName[1].indexOf('{');
+		String after = splitOnQueryName[1].substring(braceIndex);
+		String queryCall = splitOnQueryName[1].substring(0, braceIndex);
+		ArrayList<String> filters = new ArrayList<>();
+		int openIndex = queryCall.indexOf('[');
+		while(openIndex != -1){
+			int closeIndex = queryCall.indexOf(']');
+			filters.add(queryCall.substring(openIndex+1, closeIndex));
+			queryCall = queryCall.substring(closeIndex+1);
+			openIndex = queryCall.indexOf('[');
+		}
+		String paramsString = String.join(",", filters);
+		return before + "searchSubjectsWithGroupLists(subject_ids:[" + paramsString + "])" + after;
 	}
 
 	private ResponseEntity logAndReturnError(HttpStatus status, String error){

@@ -4,12 +4,18 @@ import gov.nih.nci.bento.controller.GraphQLController;
 import gov.nih.nci.bento.model.ConfigurationDAO;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
-import redis.clients.jedis.*;
+import org.springframework.stereotype.Service;
+import redis.clients.jedis.HostAndPort;
+import redis.clients.jedis.Jedis;
+import redis.clients.jedis.JedisCluster;
+import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.exceptions.JedisException;
 
 import javax.annotation.PostConstruct;
+import javax.annotation.PreDestroy;
+import java.util.HashSet;
+import java.util.Set;
 
 @Service
 public class RedisService {
@@ -17,13 +23,38 @@ public class RedisService {
 
     @Autowired
     private ConfigurationDAO config;
+    @Autowired
+    private Neo4JGraphQLService neo4jService;
+
     private JedisPool pool;
     private JedisCluster cluster;
     private Boolean useCluster;
     private int ttl;
+    private boolean isInitialized;
+    private HashSet<String> groups = new HashSet<>();
 
     @PostConstruct
-    public boolean connect() {
+    public void init(){
+        isInitialized = connect();
+    }
+
+    private enum RETURN_TYPE {
+        VALUE,
+        SET,
+        UNION,
+        INTERSECTION
+    }
+
+    private enum STORE_TYPE{
+        UNION,
+        INTERSECTION
+    }
+
+    private boolean connect() {
+        if(!config.getRedisEnabled()){
+            logger.warn("Redis not connected, connection disabled in Bento configuration");
+            return false;
+        }
         try {
             String host = config.getRedisHost();
             int port = config.getRedisPort();
@@ -54,7 +85,8 @@ public class RedisService {
         }
     }
 
-    public void finalize() {
+    @PreDestroy
+    private void close() {
         if (null != pool) {
             pool.close();
         }
@@ -63,74 +95,205 @@ public class RedisService {
         }
     }
 
-    public String getQueryResult(String query) {
-        if (useCluster) {
-            if (null == cluster) {
-                logger.warn("Redis not connected, fall back to query Neo4j!");
-                return null;
-            }
-            try {
-                return cluster.get(query);
-            } catch (JedisException e) {
-                logger.error(e);
-                logger.warn("Redis exception caught, fall back to query Neo4j!");
-                return null;
-            }
-        } else {
-            if (null == pool) {
-                logger.warn("Redis not connected, fall back to query Neo4j!");
-                return null;
-            }
+    public void cacheGroup(String key, String[] value){
+        cacheValue(key, value);
+        groups.add(key.split(":")[0]);
+    }
 
-            try (Jedis jedis = pool.getResource()) {
-                return jedis.get(query);
-            } catch (JedisException e) {
-                logger.error(e);
-                logger.warn("Redis exception caught, fall back to query Neo4j!");
-                return null;
+    public void cacheValue(String key, String value){
+        cacheValue(key, new String[]{value});
+    }
+
+    public void cacheValue(String key, String[] values){
+        Jedis jedis = null;
+        try{
+            if(values.length == 1){
+                if(useCluster){
+                    if(ttl > 0){
+                        cluster.setex(key, config.getRedisTTL(), values[0]);
+                    }
+                    else{
+                        cluster.set(key, values[0]);
+                    }
+                }
+                else{
+                    jedis = pool.getResource();
+                    if(ttl > 0){
+                        jedis.setex(key, config.getRedisTTL(), values[0]);
+                    }
+                    else{
+                        jedis.set(key, values[0]);
+                    }
+
+                }
+            }
+            else{
+                if(useCluster){
+                    cluster.sadd(key, values);
+                }
+                else{
+                    jedis = pool.getResource();
+                    jedis.sadd(key, values);
+                }
+            }
+            logger.info("Cache Entry Created");
+        }
+        catch(NullPointerException e){
+            logger.warn("Redis not connected, query won't be cached!");
+        }
+        catch(JedisException e){
+            logger.error(e);
+            logger.warn("Redis exception caught, query won't be cached!");
+        }
+        finally {
+            if(jedis != null){
+                jedis.close();
             }
         }
     }
 
+    public String getCachedValue(String key){
+        try{
+            return getFromCache(new String[]{key}, RETURN_TYPE.VALUE).iterator().next();
+        }
+        catch (NullPointerException e){
+            return null;
+        }
+    }
 
-    public boolean setQueryResult(String query, String result) {
-        if (useCluster) {
-            if (null == cluster) {
-                logger.warn("Redis not connected, query won't be cached!");
-                return false;
-            }
-            try {
-                String status;
-                if (ttl > 0) {
-                    status = cluster.setex(query, config.getRedisTTL(), result);
-                } else {
-                    status = cluster.set(query, result);
-                }
-                return status.equals("OK");
-            } catch (JedisException e) {
-                logger.error(e);
-                logger.warn("Redis exception caught, query won't be cached!");
-                return false;
-            }
+    public Set<String> getCachedSet(String key){
+        return getFromCache(new String[]{key}, RETURN_TYPE.SET);
+    }
 
-        } else {
-            if (null == pool) {
-                logger.warn("Redis not connected, query won't be cached!");
-                return false;
+    public Set<String> getUnion(String[] keys){
+        return getFromCache(keys, RETURN_TYPE.UNION);
+    }
+
+    public Set<String> getIntersection(String[] keys){
+        return getFromCache(keys, RETURN_TYPE.INTERSECTION);
+    }
+
+    private Set<String> getFromCache(String[] keys, RETURN_TYPE operation){
+        Jedis jedis = null;
+        try{
+            switch(operation){
+                case VALUE:
+                    if(useCluster){
+                        String value = cluster.get(keys[0]);
+                        Set<String> output = new HashSet<>();
+                        output.add(value);
+                        return output;
+                    }
+                    else{
+                        jedis = pool.getResource();
+                        Set<String> output = new HashSet<>();
+                        output.add(jedis.get(keys[0]));
+                        return output;
+                    }
+                case SET:
+                    if(useCluster){
+                        return cluster.smembers(keys[0]);
+                    }
+                    else{
+                        jedis = pool.getResource();
+                        return jedis.smembers(keys[0]);
+                    }
+                case UNION:
+                    if(useCluster){
+                        return cluster.sunion(keys);
+                    }
+                    else{
+                        jedis = pool.getResource();
+                        return jedis.sunion(keys);
+                    }
+                case INTERSECTION:
+                    if(useCluster){
+                        return cluster.sinter(keys);
+                    }
+                    else{
+                        jedis = pool.getResource();
+                        return jedis.sinter(keys);
+                    }
+                default:
+                    logger.error("Invalid RETURN_TYPE parameter, fall back to query neo4j");
+                    return null;
             }
-            try (Jedis jedis = pool.getResource()) {
-                String status;
-                if (ttl > 0) {
-                    status = jedis.setex(query, config.getRedisTTL(), result);
-                } else {
-                    status = jedis.set(query, result);
-                }
-                return status.equals("OK");
-            } catch (JedisException e) {
-                logger.error(e);
-                logger.warn("Redis exception caught, query won't be cached!");
-                return false;
+        }
+        catch(NullPointerException e){
+            logger.warn("Redis not connected, fall back to query Neo4j!");
+            return null;
+        }
+        catch(JedisException e){
+            logger.error(e);
+            logger.warn("Redis exception caught, fall back to query Neo4j!");
+            return null;
+        }
+        finally{
+            if(jedis != null){
+                jedis.close();
             }
         }
     }
+
+    public Long unionStore(String newKey, String[] keys){
+        Long output = store(keys, newKey, STORE_TYPE.UNION);
+        if(output > 0){
+            logger.info("Union stored: "+newKey);
+        }
+        return output;
+    }
+
+    public Long interStore(String newKey, String[] keys){
+        Long output = store(keys, newKey, STORE_TYPE.INTERSECTION);
+        if(output > 0){
+            logger.info("Intersection stored: "+newKey);
+        }
+        return output;
+    }
+
+    private Long store(String[] keys, String newKey, STORE_TYPE type){
+        Jedis jedis = null;
+        try{
+            if(type == STORE_TYPE.UNION){
+                if(useCluster){
+                    return cluster.sunionstore(newKey, keys);
+                }
+                else{
+                    jedis = pool.getResource();
+                    return jedis.sunionstore(newKey, keys);
+                }
+            }
+            else{
+                if(useCluster){
+                    return cluster.sinterstore(newKey, keys);
+                }
+                else{
+                    jedis = pool.getResource();
+                    return jedis.sinterstore(newKey, keys);
+                }
+            }
+        }
+        catch(NullPointerException e){
+            logger.warn("Redis not connected, query won't be cached!");
+        }
+        catch(JedisException e){
+            logger.error(e);
+            logger.warn("Redis exception caught, query won't be cached!");
+        }
+        finally {
+            if(jedis != null){
+                jedis.close();
+            }
+        }
+        return 0l;
+    }
+
+    public boolean isInitialized() {
+        return isInitialized;
+    }
+
+    public String[] getGroups(){
+        return groups.toArray(new String[0]);
+    }
+
 }

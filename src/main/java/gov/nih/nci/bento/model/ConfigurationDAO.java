@@ -49,6 +49,11 @@ public class ConfigurationDAO {
 	@Value("${bento.api.version}")
 	private String bentoApiVersion;
 
+	@Value("${redis.sets.enable}")
+	private Boolean redisSetsEnabled;
+
+	@Value("${redis.sets.queries}")
+	private String redisSetsQueries;
 	
 	public String getNeo4jGraphQLEndPoint() {
 		return neo4jGraphQLEndPoint;
@@ -146,4 +151,20 @@ public class ConfigurationDAO {
 	public String getBentoApiVersion(){ return bentoApiVersion; }
 
 	public void setBentoApiVersion(String bentoApiVersion){ this.bentoApiVersion = bentoApiVersion; }
+
+	public Boolean getRedisSetsEnabled() {
+		return redisSetsEnabled;
+	}
+
+	public void setRedisSetsEnabled(Boolean redisSetsEnabled) {
+		this.redisSetsEnabled = redisSetsEnabled;
+	}
+
+	public String getRedisSetsQueries() {
+		return redisSetsQueries;
+	}
+
+	public void setRedisSetsQueries(String redisSetsQueries) {
+		this.redisSetsQueries = redisSetsQueries;
+	}
 }

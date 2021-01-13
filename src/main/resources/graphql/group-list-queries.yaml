@@ -1,0 +1,12 @@
+queries:
+  - subjectListByProgram
+  - subjectListByStudy
+  - subjectListByDiagnoses
+  - subjectListByRecurrenceScore
+  - subjectListByTumorSize
+  - subjectListByTumorGrade
+  - subjectListByErStatus
+  - subjectListByPrStatus
+  - subjectListByChemotherapyRegimen
+  - subjectListByEndocrineTherapy
+  - subjectListByMenopauseStatus
