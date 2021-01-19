@@ -1,12 +1,15 @@
 package gov.nih.nci.bento.controller;
 
+import com.google.gson.FieldNamingPolicy;
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.reflect.TypeToken;
 import gov.nih.nci.bento.error.ApiError;
 import gov.nih.nci.bento.model.ConfigurationDAO;
+import gov.nih.nci.bento.model.GraphQlQuery;
 import gov.nih.nci.bento.service.Neo4JGraphQLService;
 import gov.nih.nci.bento.service.RedisService;
 import graphql.language.Document;
@@ -19,9 +22,14 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.error.YAMLException;
 
 import javax.servlet.http.HttpServletResponse;
 import javax.validation.constraints.Null;
+
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.*;
 
 @RestController
@@ -180,6 +188,89 @@ public class GraphQLController {
 
 	}
 
+	// Split into queries 
+	// Seperate into requests
+	// Execute both queries
+	// Recombine
+	@CrossOrigin
+	@RequestMapping(
+		value = "/demo/graphql/", 
+		method = RequestMethod.POST
+	)
+	@ResponseBody
+	public ResponseEntity<String> sortQueries(HttpEntity<String> httpEntity, HttpServletResponse response)
+	throws ApiError {
+		logger.info("hit end point: /demo/graphql/");
+										
+		Yaml yaml = new Yaml();
+		List<String> queries = new ArrayList<String>();
+										
+										
+		try (InputStream inputStream = this.getClass().getClassLoader().getResourceAsStream(config.getRedisSetsQueries())) {
+			Map<String, List<String>> obj = yaml.load(inputStream);
+			queries = obj.get("queries");
+			// System.out.println("queries: " + queries);
+		} catch(IOException | YAMLException e) {
+										
+		}
+										
+		// Get graphql query from request
+		String reqBody = httpEntity.getBody().toString();
+		// System.out.println("reqbody : " + reqBody);
+		Gson gson = new Gson();
+		JsonObject jsonObject = gson.fromJson(reqBody, JsonObject.class);
+		String variables = jsonObject.get("variables").toString();
+		String operation;
+		String queryKey;
+		String responseText = "";
+		// System.out.println("jsonObject----> " + jsonObject);
+										
+		try {
+			String sdl = new String(jsonObject.get("query").getAsString().getBytes(), "UTF-8");
+			StringTokenizer st = new StringTokenizer(sdl);
+			// System.out.println("Next Token is : " + st.nextToken());
+			String token;
+			String requestOne = "";
+			String requestTwo = "";
+			String head = st.nextToken("\n");
+			requestOne += head;
+			requestTwo += head;
+			while(st.hasMoreTokens()){
+				token = st.nextToken("}");
+				if(stringContains(token,queries)){
+					token += "}";
+					requestOne += token;
+				}else {
+					token += "}";
+					requestTwo += token;
+				}
+			}
+			requestOne += "}";
+										
+			GraphQlQuery query = new GraphQlQuery(requestOne,variables);
+										
+			Gson gsonBuilder = new GsonBuilder().setFieldNamingPolicy(FieldNamingPolicy.IDENTITY).setPrettyPrinting().create();
+			String testRequest = gsonBuilder.toJson(query);
+			// System.out.println("testRequest:"+ testRequest);
+										
+													
+			// System.out.println("requestOne: " + requestOne + "requestOne ends");
+			// System.out.println("requestTwo: " + requestTwo + "requestTwo ends");
+													
+													
+			responseText = neo4jService.query(testRequest);
+										
+			// Parser parser = new Parser();
+			// Document document = parser.parseDocument(requestOne);
+			// queryKey = document.toString();
+			// JsonElement rawVar = jsonObject.get("variables");
+			// System.out.println("document ------>" + document);
+		} catch(Exception e) {
+										
+		}									
+		return ResponseEntity.ok(responseText);
+	}
+
 	private String convertToGroupListQuery(String original, String queryName){
 		String[] splitOnQueryName = original.split(queryName);
 		String before = splitOnQueryName[0];
@@ -202,4 +293,9 @@ public class GraphQLController {
 		logger.error(error);
 		return ResponseEntity.status(status).body(error);
 	}
+
+	public static boolean stringContains(String input, List<String> queries) {
+		return queries.stream().anyMatch(input::contains);
+	   // return queries.stream().filter(input::contains).findAny().map(Object::toString).orElse("");
+   }
 }
